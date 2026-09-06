@@ -133,14 +133,18 @@ def init_db():
         last_seen TEXT,
         is_banned INTEGER DEFAULT 0
     )''')
+    # عمود "category" هنا أصبح يُستخدم كـ "location" عام: يقبل الآن ثلاثة أشكال:
+    #   - فئة فصل/وحدة عادية (كما كانت، مثال: test_math_ch1)
+    #   - "subj_<subject_key>" يعني: داخل القائمة الرئيسية للمادة (بجانب الوحدات)
+    #   - "box_<box_id>" يعني: داخل خانة أخرى (تعشيش)
     c.execute('''CREATE TABLE IF NOT EXISTS tests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category TEXT,
         name TEXT,
         url TEXT
     )''')
-    # جدول "الخانات" — عناصر إضافية مستقلة عن الاختبارات، تُضاف بأي مكان
-    # يختارها الأدمن (نفس منطق المواد/الفصول)، وتظهر للطالب بلون أخضر
+    # جدول "الخانات" — عناصر تشبه المجلدات: تُضاف بأي مكان (مادة/فصل/خانة أخرى)
+    # ولما الطالب يضغط عليها تفتح له شاشة فرعية فاضية تحتوي اختبارات أو خانات أخرى
     c.execute('''CREATE TABLE IF NOT EXISTS boxes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category TEXT,
@@ -429,8 +433,8 @@ def _save_item(table, category, name, url):
 def _get_db_items(table, category):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute(f"SELECT name, url, short_url FROM {table} WHERE category=? AND is_active=1 ORDER BY id", (category,))
-    rows = [{"name": r[0], "url": (r[2] or r[1])} for r in c.fetchall()]
+    c.execute(f"SELECT id, name, url, short_url FROM {table} WHERE category=? AND is_active=1 ORDER BY id", (category,))
+    rows = [{"id": r[0], "name": r[1], "url": (r[3] or r[2])} for r in c.fetchall()]
     conn.close()
     return rows
 
@@ -439,6 +443,14 @@ def _get_db_items_full(table, category):
     c = conn.cursor()
     c.execute(f"SELECT id, name, url, short_url, is_active FROM {table} WHERE category=? ORDER BY id", (category,))
     rows = [{"id": r[0], "name": r[1], "url": r[2], "short_url": r[3], "is_active": r[4]} for r in c.fetchall()]
+    conn.close()
+    return rows
+
+def _get_all_items_full(table):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(f"SELECT id, category, name, url, short_url, is_active FROM {table} ORDER BY id")
+    rows = [{"id": r[0], "category": r[1], "name": r[2], "url": r[3], "short_url": r[4], "is_active": r[5]} for r in c.fetchall()]
     conn.close()
     return rows
 
@@ -474,7 +486,7 @@ def _delete_item(table, item_id):
     conn.commit()
     conn.close()
 
-# ---------- الاختبارات (Tests) — تظهر للطالب بلون أزرق ----------
+# ---------- الاختبارات (Tests) — تظهر للطالب بلون أزرق، وتفتح رابط خارجي ----------
 
 def save_test(category, name, url):
     _save_item("tests", category, name, url)
@@ -501,22 +513,38 @@ def get_display_tests(category):
     """الاختبارات النهائية اللي تنعرض للطالب (من لوحة الأدمن فقط الآن)."""
     return get_db_tests(category)
 
-# ---------- الخانات (Boxes) — تظهر للطالب بلون أخضر ----------
+# ---------- الخانات (Boxes) — تظهر للطالب بلون أخضر، وتفتح شاشة فرعية (مو رابط) ----------
+# الخانة ليس لها رابط؛ عمود url يبقى فارغاً دوماً. عمود category هنا يُستخدم
+# كـ "موقع" الخانة (أين تظهر): داخل مادة / داخل فصل / داخل خانة أخرى.
 
-def save_box(category, name, url):
-    _save_item("boxes", category, name, url)
+def save_box(location, name):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO boxes (category, name, url, short_url, is_active) VALUES (?,?,?,?,1)",
+        (location, name, None, None)
+    )
+    conn.commit()
+    conn.close()
 
-def get_db_boxes(category):
-    return _get_db_items("boxes", category)
+def get_db_boxes(location):
+    return _get_db_items("boxes", location)
 
-def get_db_boxes_full(category):
-    return _get_db_items_full("boxes", category)
+def get_db_boxes_full(location):
+    return _get_db_items_full("boxes", location)
+
+def get_all_boxes_full():
+    return _get_all_items_full("boxes")
 
 def get_box_by_id(box_id):
     return _get_item_by_id("boxes", box_id)
 
-def update_box(box_id, name, url):
-    _update_item("boxes", box_id, name, url)
+def update_box(box_id, name):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE boxes SET name=? WHERE id=?", (name, box_id))
+    conn.commit()
+    conn.close()
 
 def set_box_active(box_id, status):
     _set_item_active("boxes", box_id, status)
@@ -591,6 +619,73 @@ def build_category_labels():
 CATEGORY_LABELS = build_category_labels()
 
 # ======================================================================
+# ==================== دوال مساعدة عامة للمواقع (Locations) ================
+# ======================================================================
+# "الموقع" (location) الآن قد يكون:
+#   - فئة فصل عادية (مثال: test_math_ch1)
+#   - "subj_<subject_key>"  → داخل القائمة الرئيسية لمادة معينة
+#   - "box_<box_id>"        → داخل خانة أخرى (تعشيش)
+
+def subject_for_category(category):
+    """يحدد المادة التي تتبعها فئة فصل عادية (يُستخدم لزر الرجوع)."""
+    if "isl" in category:
+        return "islamic"
+    elif "ar_" in category:
+        return "arabic"
+    elif "en_" in category:
+        return "english"
+    elif "math" in category:
+        return "math"
+    elif "bio" in category:
+        return "biology"
+    elif "phy" in category:
+        return "physics"
+    elif "chem" in category:
+        return "chemistry"
+    else:
+        return "main_menu"
+
+def back_target_for_location(location):
+    """يحدد الـ callback_data المناسب لزر الرجوع اعتماداً على نوع الموقع."""
+    if location.startswith("subj_"):
+        return location[len("subj_"):]
+    elif location.startswith("box_"):
+        return location  # سيفتح الخانة الأب مباشرة (نفس معالج box_)
+    else:
+        return subject_for_category(location)
+
+def location_label(location):
+    """وصف نصي مقروء لموقع خانة أو اختبار، يُستخدم بلوحة الأدمن فقط."""
+    if location.startswith("subj_"):
+        key = location[len("subj_"):]
+        return f"{SUBJECT_LABELS.get(key, key)} (القائمة الرئيسية)"
+    elif location.startswith("box_"):
+        try:
+            parent_id = int(location[len("box_"):])
+        except ValueError:
+            parent_id = None
+        parent = get_box_by_id(parent_id) if parent_id else None
+        if parent:
+            return f"📦 داخل خانة: {parent['name']}"
+        return "📦 داخل خانة محذوفة"
+    else:
+        return CATEGORY_LABELS.get(location, location)
+
+def build_box_picker_markup(callback_prefix, cancel_data="addtest_cancel", only_active=True):
+    """يبني قائمة بكل الخانات الموجودة (لاختيار خانة أب/حاضنة). يرجع None لو ما فيه خانات."""
+    boxes = get_all_boxes_full()
+    if only_active:
+        boxes = [b for b in boxes if b["is_active"]]
+    if not boxes:
+        return None
+    markup = InlineKeyboardMarkup(row_width=1)
+    for b in boxes:
+        markup.add(InlineKeyboardButton(f"📦 {b['name']} ({location_label(b['category'])})",
+                                         callback_data=f"{callback_prefix}{b['id']}", style="success"))
+    markup.add(InlineKeyboardButton("❌ إلغاء", callback_data=cancel_data, style="danger"))
+    return markup
+
+# ======================================================================
 # ============================== نظام VIP ================================
 # ======================================================================
 
@@ -633,9 +728,7 @@ def chapter_label(label, category, user_id):
 # ======================================================================
 # ============================ بيانات الاختبارات ==========================
 # ======================================================================
-# ⚠️ تم حذف الاختبارات المكتوبة يدوياً هنا بناءً على طلبك. من الآن، كل
-# الاختبارات تُضاف حصرياً من لوحة الأدمن (➕ إضافة اختبار) ثم تُحفظ
-# بقاعدة البيانات مباشرة.
+# ⚠️ كل الاختبارات والخانات تُضاف حصرياً من لوحة الأدمن وتُحفظ بقاعدة البيانات.
 
 data = {}
 
@@ -710,6 +803,12 @@ def chapter_markup(subject, callback_prefix, include_cancel=True):
     if include_cancel:
         markup.add(InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"))
     return markup
+
+def append_subject_boxes(markup, subject_key):
+    """يضيف بآخر القائمة الرئيسية لمادة معينة أي خانات (📦) مربوطة بها مباشرة."""
+    boxes = get_db_boxes(f"subj_{subject_key}")
+    for b in boxes:
+        markup.add(InlineKeyboardButton(f"📦 {b['name']}", callback_data=f"box_{b['id']}", style="success"))
 
 # ======================================================================
 # ========================= أوامر المستخدم العادي =========================
@@ -828,20 +927,46 @@ def handle_admin_callback(call):
         bot.send_message(call.message.chat.id, "أرسل آيدي المستخدم (رقم) المراد فك حظره:")
 
     elif call.data == "admin_add_test":
-        bot.send_message(call.message.chat.id, "📚 اختر المادة التي تريد إضافة اختبار لها:",
-                          reply_markup=subject_markup("addsubj_"))
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("📂 داخل وحدة/فصل", callback_data="addtestloc_chapter", style="primary"),
+            InlineKeyboardButton("📦 داخل خانة موجودة", callback_data="addtestloc_box", style="success"),
+            InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
+        )
+        bot.send_message(call.message.chat.id, "أين تريد إضافة الاختبار؟", reply_markup=markup)
 
     elif call.data == "admin_edit_test":
-        bot.send_message(call.message.chat.id, "📚 اختر المادة التي تريد تعديل/حذف اختبار منها:",
-                          reply_markup=subject_markup("editsubj_"))
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("📂 حسب الوحدة/الفصل", callback_data="edittestloc_chapter", style="primary"),
+            InlineKeyboardButton("📦 داخل خانة", callback_data="edittestloc_box", style="success"),
+            InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
+        )
+        bot.send_message(call.message.chat.id, "من أين تريد تعديل/حذف الاختبار؟", reply_markup=markup)
 
     elif call.data == "admin_add_box":
-        bot.send_message(call.message.chat.id, "📚 اختر المادة التي تريد إضافة خانة لها:",
-                          reply_markup=subject_markup("addboxsubj_"))
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("📚 داخل مادة (بجانب الوحدات)", callback_data="addboxloc_subject", style="primary"),
+            InlineKeyboardButton("📂 داخل وحدة/فصل", callback_data="addboxloc_chapter", style="success"),
+            InlineKeyboardButton("📦 داخل خانة موجودة", callback_data="addboxloc_box", style="success"),
+            InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
+        )
+        bot.send_message(call.message.chat.id, "أين تريد إضافة الخانة؟", reply_markup=markup)
 
     elif call.data == "admin_edit_box":
-        bot.send_message(call.message.chat.id, "📚 اختر المادة التي تريد تعديل/حذف خانة منها:",
-                          reply_markup=subject_markup("editboxsubj_"))
+        boxes = get_all_boxes_full()
+        if not boxes:
+            bot.send_message(call.message.chat.id, "لا توجد أي خانات مضافة بعد ⏳")
+        else:
+            markup = InlineKeyboardMarkup(row_width=1)
+            for b in boxes:
+                status_emoji = "🟢" if b["is_active"] else "🔴"
+                markup.add(InlineKeyboardButton(f"{status_emoji} {b['name']} — {location_label(b['category'])}",
+                                                 callback_data=f"editboxitem_{b['id']}", style="success"))
+            markup.add(InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"))
+            bot.send_message(call.message.chat.id, "🛠️ اختر الخانة التي تريد تعديلها أو حذفها:\n(🟢 مفعّلة / 🔴 معطّلة)",
+                              reply_markup=markup)
 
     elif call.data == "admin_set_channel":
         admin_state[call.from_user.id] = "waiting_channel"
@@ -1026,6 +1151,41 @@ def handle_vip_remove(message):
 # ==================== إضافة اختبار جديد من لوحة الأدمن =====================
 # ======================================================================
 
+@bot.callback_query_handler(func=lambda call: call.data == "addtestloc_chapter")
+@safe_handler
+def handle_addtestloc_chapter(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    bot.edit_message_text("📚 اختر المادة التي تريد إضافة اختبار لها:", chat_id=call.message.chat.id,
+                           message_id=call.message.message_id, reply_markup=subject_markup("addsubj_"))
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "addtestloc_box")
+@safe_handler
+def handle_addtestloc_box(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    markup = build_box_picker_markup("addtestparentbox_")
+    if markup is None:
+        bot.answer_callback_query(call.id, "⚠️ لا توجد أي خانات بعد. أنشئ خانة أولاً.", show_alert=True)
+        return
+    bot.edit_message_text("📦 اختر الخانة التي تريد إضافة الاختبار بداخلها:", chat_id=call.message.chat.id,
+                           message_id=call.message.message_id, reply_markup=markup)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("addtestparentbox_"))
+@safe_handler
+def handle_add_test_parent_box(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    box_id = int(call.data.replace("addtestparentbox_", ""))
+    add_test_state[call.from_user.id] = {"stage": "waiting_name", "category": f"box_{box_id}"}
+    bot.edit_message_text("✏️ أرسل الآن اسم الاختبار:", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    bot.answer_callback_query(call.id)
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("addsubj_"))
 @safe_handler
 def handle_add_test_subject(call):
@@ -1078,12 +1238,64 @@ def handle_add_test_url(message):
     save_test(state["category"], state["name"], url)
     bot.send_message(
         message.chat.id,
-        f"✅ تمت إضافة الاختبار بنجاح!\n\n📌 القسم: {state['category']}\n📝 الاسم: {state['name']}\n🔗 الرابط: {url}"
+        f"✅ تمت إضافة الاختبار بنجاح!\n\n📍 الموقع: {location_label(state['category'])}\n📝 الاسم: {state['name']}\n🔗 الرابط: {url}"
     )
 
 # ======================================================================
 # ========================== تعديل/حذف اختبار ============================
 # ======================================================================
+
+def render_tests_management_list(category, chat_id, message_id):
+    """يعرض قائمة الاختبارات الموجودة بفئة/موقع معين لتعديلها أو حذفها. يرجع True لو فيه اختبارات."""
+    tests = get_db_tests_full(category)
+    if not tests:
+        return False
+    markup = InlineKeyboardMarkup(row_width=1)
+    for t in tests:
+        status_emoji = "🟢" if t["is_active"] else "🔴"
+        markup.add(InlineKeyboardButton(f"{status_emoji} {t['name']}", callback_data=f"edititem_{t['id']}", style="primary"))
+    markup.add(InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"))
+    bot.edit_message_text("🛠️ اختر الاختبار الذي تريد تعديله أو حذفه:\n(🟢 مفعّل / 🔴 معطّل)",
+                           chat_id=chat_id, message_id=message_id, reply_markup=markup)
+    return True
+
+@bot.callback_query_handler(func=lambda call: call.data == "edittestloc_chapter")
+@safe_handler
+def handle_edittestloc_chapter(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    bot.edit_message_text("📚 اختر المادة التي تريد تعديل/حذف اختبار منها:", chat_id=call.message.chat.id,
+                           message_id=call.message.message_id, reply_markup=subject_markup("editsubj_"))
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "edittestloc_box")
+@safe_handler
+def handle_edittestloc_box(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    markup = build_box_picker_markup("editboxtestsparent_")
+    if markup is None:
+        bot.answer_callback_query(call.id, "⚠️ لا توجد أي خانات بعد.", show_alert=True)
+        return
+    bot.edit_message_text("📦 اختر الخانة التي تريد تعديل/حذف اختبار من داخلها:", chat_id=call.message.chat.id,
+                           message_id=call.message.message_id, reply_markup=markup)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxtestsparent_"))
+@safe_handler
+def handle_edit_test_box_parent(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    box_id = int(call.data.replace("editboxtestsparent_", ""))
+    category = f"box_{box_id}"
+    ok = render_tests_management_list(category, call.message.chat.id, call.message.message_id)
+    if not ok:
+        bot.answer_callback_query(call.id, "لا توجد اختبارات داخل هذه الخانة بعد ⏳", show_alert=True)
+        return
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("editsubj_"))
 @safe_handler
@@ -1104,19 +1316,10 @@ def handle_edit_test_chapter(call):
         return
 
     category = call.data.replace("editchap_", "")
-    tests = get_db_tests_full(category)
-
-    if not tests:
+    ok = render_tests_management_list(category, call.message.chat.id, call.message.message_id)
+    if not ok:
         bot.answer_callback_query(call.id, "لا توجد اختبارات مضافة من لوحة الأدمن بهذا القسم ⏳", show_alert=True)
         return
-
-    markup = InlineKeyboardMarkup(row_width=1)
-    for t in tests:
-        status_emoji = "🟢" if t["is_active"] else "🔴"
-        markup.add(InlineKeyboardButton(f"{status_emoji} {t['name']}", callback_data=f"edititem_{t['id']}", style="primary"))
-    markup.add(InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"))
-    bot.edit_message_text("🛠️ اختر الاختبار الذي تريد تعديله أو حذفه:\n(🟢 مفعّل / 🔴 معطّل)",
-                           chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("edititem_"))
@@ -1143,7 +1346,7 @@ def handle_edit_test_item(call):
         InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
     )
     bot.edit_message_text(
-        f"📝 الاسم: {test['name']}\n🔗 الرابط: {test['url']}\nالحالة: {status_text}\n\nاختر الإجراء:",
+        f"📝 الاسم: {test['name']}\n🔗 الرابط: {test['url']}\n📍 الموقع: {location_label(test['category'])}\nالحالة: {status_text}\n\nاختر الإجراء:",
         chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup
     )
     bot.answer_callback_query(call.id)
@@ -1175,7 +1378,7 @@ def handle_edit_test_toggle(call):
         InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
     )
     bot.edit_message_text(
-        f"📝 الاسم: {test['name']}\n🔗 الرابط: {test['url']}\nالحالة: {status_text}\n\nاختر الإجراء:",
+        f"📝 الاسم: {test['name']}\n🔗 الرابط: {test['url']}\n📍 الموقع: {location_label(test['category'])}\nالحالة: {status_text}\n\nاختر الإجراء:",
         chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup
     )
     bot.answer_callback_query(call.id, "تم التفعيل ✅" if new_status else "تم التعطيل ⏸️")
@@ -1241,8 +1444,64 @@ def handle_edit_test_url(message):
 # ======================================================================
 # ==================== إضافة خانة جديدة من لوحة الأدمن (أخضر) ================
 # ======================================================================
-# نفس منطق الاختبارات بالضبط، لكن مستقلة تماماً: تُخزّن بجدول "boxes" وتظهر
-# للطالب بلون أخضر مختلف عن لون الاختبارات (أزرق).
+# الخانة الآن مجرد زر يفتح شاشة فرعية فاضية (بدون رابط)، وتُبنى بأي موقع:
+# داخل مادة (بجانب الوحدات) / داخل فصل أو وحدة / داخل خانة أخرى (تعشيش).
+
+@bot.callback_query_handler(func=lambda call: call.data == "addboxloc_subject")
+@safe_handler
+def handle_addboxloc_subject(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    bot.edit_message_text("📚 اختر المادة (ستظهر الخانة بجانب الوحدات مباشرة):", chat_id=call.message.chat.id,
+                           message_id=call.message.message_id, reply_markup=subject_markup("addboxsubjmain_"))
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("addboxsubjmain_"))
+@safe_handler
+def handle_add_box_subject_main(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    subject = call.data.replace("addboxsubjmain_", "")
+    add_box_state[call.from_user.id] = {"stage": "waiting_name", "category": f"subj_{subject}"}
+    bot.edit_message_text("✏️ أرسل الآن اسم الخانة:", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "addboxloc_chapter")
+@safe_handler
+def handle_addboxloc_chapter(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    bot.edit_message_text("📚 اختر المادة التي تريد إضافة خانة لها:", chat_id=call.message.chat.id,
+                           message_id=call.message.message_id, reply_markup=subject_markup("addboxsubj_"))
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "addboxloc_box")
+@safe_handler
+def handle_addboxloc_box(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    markup = build_box_picker_markup("addboxparentbox_")
+    if markup is None:
+        bot.answer_callback_query(call.id, "⚠️ لا توجد أي خانات بعد. أنشئ خانة أولاً من خيار آخر.", show_alert=True)
+        return
+    bot.edit_message_text("📦 اختر الخانة الأب التي تريد إضافة الخانة الجديدة بداخلها:", chat_id=call.message.chat.id,
+                           message_id=call.message.message_id, reply_markup=markup)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("addboxparentbox_"))
+@safe_handler
+def handle_add_box_parent_box(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    parent_id = int(call.data.replace("addboxparentbox_", ""))
+    add_box_state[call.from_user.id] = {"stage": "waiting_name", "category": f"box_{parent_id}"}
+    bot.edit_message_text("✏️ أرسل الآن اسم الخانة:", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("addboxsubj_"))
 @safe_handler
@@ -1270,62 +1529,18 @@ def handle_add_box_chapter(call):
 @bot.message_handler(func=lambda m: add_box_state.get(m.from_user.id, {}).get("stage") == "waiting_name")
 @safe_handler
 def handle_add_box_name(message):
-    add_box_state[message.from_user.id]["name"] = message.text.strip()
-    add_box_state[message.from_user.id]["stage"] = "waiting_url"
-    bot.send_message(message.chat.id, "🔗 الآن أرسل رابط الخانة (يبدأ بـ http:// أو https://):")
-
-@bot.message_handler(func=lambda m: add_box_state.get(m.from_user.id, {}).get("stage") == "waiting_url")
-@safe_handler
-def handle_add_box_url(message):
-    url = message.text.strip()
-    if not url.startswith("http"):
-        bot.send_message(message.chat.id, "⚠️ الرابط غير صحيح، تأكد إنه يبدأ بـ http:// أو https:// وأرسله مرة أخرى:")
-        return
-
     state = add_box_state.pop(message.from_user.id)
-    save_box(state["category"], state["name"], url)
+    name = message.text.strip()
+    save_box(state["category"], name)
     bot.send_message(
         message.chat.id,
-        f"✅ تمت إضافة الخانة بنجاح! (ستظهر للطلاب باللون الأخضر)\n\n📌 القسم: {state['category']}\n📝 الاسم: {state['name']}\n🔗 الرابط: {url}"
+        f"✅ تمت إضافة الخانة بنجاح! (ستظهر للطلاب كزر أخضر يفتح شاشة فرعية)\n\n"
+        f"📍 الموقع: {location_label(state['category'])}\n📝 الاسم: {name}"
     )
 
 # ======================================================================
 # ============================ تعديل/حذف خانة ============================
 # ======================================================================
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxsubj_"))
-@safe_handler
-def handle_edit_box_subject(call):
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
-        return
-    subject = call.data.replace("editboxsubj_", "")
-    bot.edit_message_text("📂 اختر الفصل/القسم:", chat_id=call.message.chat.id, message_id=call.message.message_id,
-                           reply_markup=chapter_markup(subject, "editboxchap_"))
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxchap_"))
-@safe_handler
-def handle_edit_box_chapter(call):
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
-        return
-
-    category = call.data.replace("editboxchap_", "")
-    boxes = get_db_boxes_full(category)
-
-    if not boxes:
-        bot.answer_callback_query(call.id, "لا توجد خانات مضافة بهذا القسم ⏳", show_alert=True)
-        return
-
-    markup = InlineKeyboardMarkup(row_width=1)
-    for b in boxes:
-        status_emoji = "🟢" if b["is_active"] else "🔴"
-        markup.add(InlineKeyboardButton(f"{status_emoji} {b['name']}", callback_data=f"editboxitem_{b['id']}", style="success"))
-    markup.add(InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"))
-    bot.edit_message_text("🛠️ اختر الخانة التي تريد تعديلها أو حذفها:\n(🟢 مفعّلة / 🔴 معطّلة)",
-                           chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
-    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("editboxitem_"))
 @safe_handler
@@ -1345,13 +1560,13 @@ def handle_edit_box_item(call):
 
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton("✏️ تعديل الاسم والرابط", callback_data=f"editboxdo_{box_id}", style="success"),
+        InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"editboxdo_{box_id}", style="success"),
         InlineKeyboardButton(toggle_label, callback_data=f"editboxtoggle_{box_id}", style="primary"),
         InlineKeyboardButton("🗑️ حذف الخانة", callback_data=f"editboxdel_{box_id}", style="danger"),
         InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
     )
     bot.edit_message_text(
-        f"📝 الاسم: {box['name']}\n🔗 الرابط: {box['url']}\nالحالة: {status_text}\n\nاختر الإجراء:",
+        f"📝 الاسم: {box['name']}\n📍 الموقع: {location_label(box['category'])}\nالحالة: {status_text}\n\nاختر الإجراء:",
         chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup
     )
     bot.answer_callback_query(call.id)
@@ -1377,13 +1592,13 @@ def handle_edit_box_toggle(call):
     toggle_label = "⏸️ تعطيل الخانة" if box["is_active"] else "▶️ تفعيل الخانة"
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton("✏️ تعديل الاسم والرابط", callback_data=f"editboxdo_{box_id}", style="success"),
+        InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"editboxdo_{box_id}", style="success"),
         InlineKeyboardButton(toggle_label, callback_data=f"editboxtoggle_{box_id}", style="primary"),
         InlineKeyboardButton("🗑️ حذف الخانة", callback_data=f"editboxdel_{box_id}", style="danger"),
         InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
     )
     bot.edit_message_text(
-        f"📝 الاسم: {box['name']}\n🔗 الرابط: {box['url']}\nالحالة: {status_text}\n\nاختر الإجراء:",
+        f"📝 الاسم: {box['name']}\n📍 الموقع: {location_label(box['category'])}\nالحالة: {status_text}\n\nاختر الإجراء:",
         chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup
     )
     bot.answer_callback_query(call.id, "تم التفعيل ✅" if new_status else "تم التعطيل ⏸️")
@@ -1402,8 +1617,10 @@ def handle_edit_box_delete(call):
         return
 
     delete_box(box_id)
-    bot.edit_message_text(f"🗑️ تم حذف الخانة \"{box['name']}\" بنجاح.",
-                           chat_id=call.message.chat.id, message_id=call.message.message_id)
+    bot.edit_message_text(
+        f"🗑️ تم حذف الخانة \"{box['name']}\" بنجاح.\n"
+        "⚠️ ملاحظة: أي اختبارات أو خانات فرعية كانت بداخلها تبقى موجودة بقاعدة البيانات لكنها لن تظهر لأي طالب.",
+        chat_id=call.message.chat.id, message_id=call.message.message_id)
     bot.answer_callback_query(call.id, "تم الحذف ✅")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("editboxdo_"))
@@ -1427,24 +1644,10 @@ def handle_edit_box_start(call):
 @bot.message_handler(func=lambda m: edit_box_state.get(m.from_user.id, {}).get("stage") == "waiting_name")
 @safe_handler
 def handle_edit_box_name(message):
-    edit_box_state[message.from_user.id]["name"] = message.text.strip()
-    edit_box_state[message.from_user.id]["stage"] = "waiting_url"
-    bot.send_message(message.chat.id, "🔗 الآن أرسل الرابط الجديد (يبدأ بـ http:// أو https://):")
-
-@bot.message_handler(func=lambda m: edit_box_state.get(m.from_user.id, {}).get("stage") == "waiting_url")
-@safe_handler
-def handle_edit_box_url(message):
-    url = message.text.strip()
-    if not url.startswith("http"):
-        bot.send_message(message.chat.id, "⚠️ الرابط غير صحيح، تأكد إنه يبدأ بـ http:// أو https:// وأرسله مرة أخرى:")
-        return
-
     state = edit_box_state.pop(message.from_user.id)
-    update_box(state["id"], state["name"], url)
-    bot.send_message(
-        message.chat.id,
-        f"✅ تم تعديل الخانة بنجاح!\n\n📝 الاسم الجديد: {state['name']}\n🔗 الرابط الجديد: {url}"
-    )
+    name = message.text.strip()
+    update_box(state["id"], name)
+    bot.send_message(message.chat.id, f"✅ تم تعديل اسم الخانة بنجاح!\n\n📝 الاسم الجديد: {name}")
 
 # ======================================================================
 # ============================ إدارة الأدمنية ============================
@@ -1577,6 +1780,7 @@ def handle_query(call):
         for i in range(1, 6):
             cat = f"test_isl_u{i}"
             markup.add(InlineKeyboardButton(chapter_label(f"الوحدة {i}", cat, uid), callback_data=cat, style="success"))
+        append_subject_boxes(markup, "islamic")
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🕋 التربية الإسلامية - اختر القسم:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
@@ -1586,6 +1790,7 @@ def handle_query(call):
             InlineKeyboardButton(chapter_label("القواعد", "test_ar_grammar", uid), callback_data="test_ar_grammar", style="success"),
             InlineKeyboardButton(chapter_label("الأدب والنصوص", "test_ar_literature", uid), callback_data="test_ar_literature", style="success")
         )
+        append_subject_boxes(markup, "arabic")
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("📝 اللغة العربية - اختر القسم:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
@@ -1596,6 +1801,7 @@ def handle_query(call):
             InlineKeyboardButton(chapter_label("قطع الكتاب (Textbook)", "test_en_passages", uid), callback_data="test_en_passages", style="success"),
             InlineKeyboardButton(chapter_label("الأدب (Literature)", "test_en_literature", uid), callback_data="test_en_literature", style="success")
         )
+        append_subject_boxes(markup, "english")
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🔠 اللغة الإنكليزية - اختر القسم:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
@@ -1604,6 +1810,7 @@ def handle_query(call):
         for i in range(1, 6):
             cat = f"test_math_ch{i}"
             markup.add(InlineKeyboardButton(chapter_label(f"الفصل {i}", cat, uid), callback_data=cat, style="success"))
+        append_subject_boxes(markup, "math")
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🔢 الرياضيات - اختر الفصل:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
@@ -1612,6 +1819,7 @@ def handle_query(call):
         for i in range(1, 6):
             cat = f"test_bio_ch{i}"
             markup.add(InlineKeyboardButton(chapter_label(f"الفصل {i}", cat, uid), callback_data=cat, style="success"))
+        append_subject_boxes(markup, "biology")
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🧬 الأحياء - اختر الفصل:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
@@ -1620,6 +1828,7 @@ def handle_query(call):
         for i in range(1, 11):
             cat = f"test_phy_ch{i}"
             markup.add(InlineKeyboardButton(chapter_label(f"الفصل {i}", cat, uid), callback_data=cat, style="success"))
+        append_subject_boxes(markup, "physics")
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("⚡ الفيزياء - اختر الفصل:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
@@ -1628,28 +1837,13 @@ def handle_query(call):
         for i in range(1, 9):
             cat = f"test_chem_ch{i}"
             markup.add(InlineKeyboardButton(chapter_label(f"الفصل {i}", cat, uid), callback_data=cat, style="success"))
+        append_subject_boxes(markup, "chemistry")
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🧪 الكيمياء - اختر الفصل:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
     elif call.data.startswith("test_"):
         category = call.data
-
-        if "isl" in category:
-            b_target = "islamic"
-        elif "ar_" in category:
-            b_target = "arabic"
-        elif "en_" in category:
-            b_target = "english"
-        elif "math" in category:
-            b_target = "math"
-        elif "bio" in category:
-            b_target = "biology"
-        elif "phy" in category:
-            b_target = "physics"
-        elif "chem" in category:
-            b_target = "chemistry"
-        else:
-            b_target = "main_menu"
+        b_target = subject_for_category(category)
 
         if not is_category_free(category) and not is_vip(call.from_user.id):
             bot.edit_message_text(
@@ -1659,8 +1853,8 @@ def handle_query(call):
             )
             return
 
-        tests = get_display_tests(category)   # أزرق (style="primary")
-        boxes = get_db_boxes(category)         # أخضر (style="success")
+        tests = get_display_tests(category)   # أزرق (style="primary") - رابط مباشر
+        boxes = get_db_boxes(category)         # أخضر (style="success") - تفتح شاشة فرعية
 
         if not tests and not boxes:
             bot.answer_callback_query(call.id, "عذراً، لم يتم إضافة أي محتوى لهذا القسم بعد ⏳", show_alert=True)
@@ -1671,10 +1865,41 @@ def handle_query(call):
         for test in tests:
             markup.add(InlineKeyboardButton(test["name"], url=test["url"], style="primary"))
         for box in boxes:
-            markup.add(InlineKeyboardButton(box["name"], url=box["url"], style="success"))
+            markup.add(InlineKeyboardButton(f"📦 {box['name']}", callback_data=f"box_{box['id']}", style="success"))
 
         markup.add(back_btn(b_target))
         bot.edit_message_text("📚 اختر موضوع الاختبار للانتقال للموقع:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif call.data.startswith("box_"):
+        try:
+            box_id = int(call.data.replace("box_", "", 1))
+        except ValueError:
+            bot.answer_callback_query(call.id, "⚠️ خطأ بالبيانات", show_alert=True)
+            return
+
+        box = get_box_by_id(box_id)
+        if not box or not box["is_active"]:
+            bot.answer_callback_query(call.id, "⚠️ هذه الخانة غير متوفرة حالياً", show_alert=True)
+            return
+
+        location = f"box_{box_id}"
+        tests = get_db_tests(location)     # أزرق - رابط مباشر
+        subboxes = get_db_boxes(location)  # أخضر - خانات متداخلة
+
+        if not tests and not subboxes:
+            bot.answer_callback_query(call.id, "📦 لا يوجد محتوى داخل هذه الخانة بعد ⏳", show_alert=True)
+            return
+
+        log_view("box", location)
+
+        for test in tests:
+            markup.add(InlineKeyboardButton(test["name"], url=test["url"], style="primary"))
+        for sb in subboxes:
+            markup.add(InlineKeyboardButton(f"📦 {sb['name']}", callback_data=f"box_{sb['id']}", style="success"))
+
+        back_target = back_target_for_location(box["category"])
+        markup.add(back_btn(back_target))
+        bot.edit_message_text(f"📦 {box['name']} - اختر:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 # ======================================================================
 # ================================ تشغيل البوت =============================
