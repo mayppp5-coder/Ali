@@ -24,32 +24,22 @@ DEVELOPER_ID = 1329831028  # آيدي المطور (احتياطي، يُستخ�
 SUPER_ADMIN_IDS = [1329831028]
 
 # ============== الاشتراك الإجباري ==============
-# هذه القيم تُستخدم فقط كقيمة افتراضية أول مرة يشتغل فيها البوت.
-# بعد ذلك، يمكن للأدمن تغيير القناة من داخل لوحة التحكم مباشرة
-# (يُحفظ التغيير بقاعدة البيانات ولا يحتاج تعديل الكود ولا إعادة رفع البوت).
-
 CHANNEL_USERNAME = "@Q4_92"          # يوزر القناة (لازم يبدأ بـ @)
 CHANNEL_URL = "https://t.me/Q4_92"   # رابط القناة للزر
 
 # ============== النسخ الاحتياطي على قناة خاصة ==============
-# ضع هنا آيدي قناة خاصة (البوت لازم يكون أدمن فيها) عشان تُرسل لها النسخ
-# الاحتياطية تلقائياً، بالإضافة لإرسالها للأدمنية الأساسيين. القناة أضمن
-# لأنها ما تضيع حتى لو تغيّر آيدي المطور أو حظر الشخصي.
-# مثال: BACKUP_CHANNEL_ID = -1001234567890
 BACKUP_CHANNEL_ID = None
 
 # ============== إعدادات الحماية من الضغط السريع (Rate Limiting) ==============
-RATE_LIMIT_SECONDS = 0.6   # أقل مدة مسموحة بين ضغطتين متتاليتين لنفس المستخدم
-RATE_LIMIT_STRIKES = 3     # عدد الضغطات السريعة المسموحة قبل التنبيه
-RATE_LIMIT_LOCK_SECONDS = 3  # مدة الحظر المؤقت بعد تجاوز عدد الضغطات المسموح
+RATE_LIMIT_SECONDS = 0.6
+RATE_LIMIT_STRIKES = 3
+RATE_LIMIT_LOCK_SECONDS = 3
 
 DB_FILE = "users.db"
 
 # ======================================================================
 # ========================= تسجيل الأخطاء (Logging) =====================
 # ======================================================================
-# كل خطأ غير متوقع بيتسجل بملف bot_errors.log مع الوقت وتفاصيل الخطأ،
-# حتى لو ما كنت مراقب شاشة البوت وقت حدوثه.
 
 logging.basicConfig(
     filename="bot_errors.log",
@@ -59,7 +49,6 @@ logging.basicConfig(
 )
 
 def notify_super_admins_of_error(context, error):
-    """يرسل تنبيه مختصر للأدمنية الأساسيين عند حدوث خطأ (اختياري لكن مفيد)."""
     for admin_id in SUPER_ADMIN_IDS:
         try:
             bot.send_message(admin_id, f"⚠️ حدث خطأ في البوت ({context}):\n{error}")
@@ -67,7 +56,6 @@ def notify_super_admins_of_error(context, error):
             pass
 
 def safe_handler(func):
-    """ديكوريتر يلف أي هاندلر ليضمن تسجيل أي استثناء بملف اللوغ بدل ما يوقف البوت."""
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -80,27 +68,20 @@ def safe_handler(func):
 # ======================================================================
 # ==================== الحماية من الضغط السريع (Rate Limit) ================
 # ======================================================================
-# القاعدة الجديدة: أول ضغطتين سريعتين متتاليتين يتم تجاهلهما بهدوء (بدون
-# إزعاج المستخدم برسالة كل مرة)، وبالضغطة الثالثة السريعة يظهر تنبيه
-# "انتظر 3 ثواني" ويتم قفل الأزرار له لمدة 3 ثواني كاملة حتى لا يُغرق
-# البوت بالطلبات ويتوقف (يكرش).
-# هذا حد بسيط بالذاكرة (مو قاعدة بيانات) لأنه مؤقت بطبيعته.
 
-_last_action_time = {}     # آخر وقت ضغط لكل مستخدم
-_rapid_press_count = {}    # عداد الضغطات السريعة المتتالية لكل مستخدم
-_lock_until = {}           # وقت انتهاء القفل المؤقت لكل مستخدم
+_last_action_time = {}
+_rapid_press_count = {}
+_lock_until = {}
 
 def rate_limited(seconds=RATE_LIMIT_SECONDS):
     def decorator(func):
         def wrapper(update_obj, *args, **kwargs):
             uid = update_obj.from_user.id
-            # الأدمنية معفيين من التحديد عشان ما يعيقهم أثناء الإدارة
             if is_admin(uid):
                 return func(update_obj, *args, **kwargs)
 
             now = time.time()
 
-            # المستخدم مقفول مؤقتاً بسبب ضغطات سريعة سابقة
             lock_until = _lock_until.get(uid, 0)
             if now < lock_until:
                 remaining = max(1, int(lock_until - now + 0.999))
@@ -112,13 +93,11 @@ def rate_limited(seconds=RATE_LIMIT_SECONDS):
 
             last = _last_action_time.get(uid, 0)
             if now - last < seconds:
-                # ضغطة سريعة جداً بعد الضغطة السابقة
                 count = _rapid_press_count.get(uid, 0) + 1
                 _rapid_press_count[uid] = count
                 _last_action_time[uid] = now
 
                 if count >= RATE_LIMIT_STRIKES:
-                    # وصل لعدد الضغطات المسموح تجاوزه: يُقفل ويُنبَّه
                     _lock_until[uid] = now + RATE_LIMIT_LOCK_SECONDS
                     _rapid_press_count[uid] = 0
                     try:
@@ -126,14 +105,12 @@ def rate_limited(seconds=RATE_LIMIT_SECONDS):
                     except Exception:
                         pass
                 else:
-                    # ضغطة سريعة لكن لم تصل للحد بعد: تجاهل هادئ بدون رسالة مزعجة
                     try:
                         bot.answer_callback_query(update_obj.id)
                     except Exception:
                         pass
                 return
 
-            # ضغطة طبيعية (مر وقت كافٍ منذ آخر ضغطة): صفّر العداد ونفّذ الأمر
             _rapid_press_count[uid] = 0
             _last_action_time[uid] = now
             return func(update_obj, *args, **kwargs)
@@ -162,24 +139,29 @@ def init_db():
         name TEXT,
         url TEXT
     )''')
+    # جدول "الخانات" — عناصر إضافية مستقلة عن الاختبارات، تُضاف بأي مكان
+    # يختارها الأدمن (نفس منطق المواد/الفصول)، وتظهر للطالب بلون أخضر
+    c.execute('''CREATE TABLE IF NOT EXISTS boxes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT,
+        name TEXT,
+        url TEXT
+    )''')
     c.execute('''CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
         added_by INTEGER,
         added_at TEXT
     )''')
-    # عدّاد المشاهدات: يحسب كم مرة انفتحت كل مادة/فصل، لمعرفة أكثر شي يستخدمه الطلاب
     c.execute('''CREATE TABLE IF NOT EXISTS view_counts (
         scope TEXT,
         key TEXT,
         count INTEGER DEFAULT 0,
         PRIMARY KEY (scope, key)
     )''')
-    # كاش الروابط المختصرة، عشان ما نطلب نفس الرابط الطويل مرتين من خدمة الاختصار
     c.execute('''CREATE TABLE IF NOT EXISTS short_link_cache (
         long_url TEXT PRIMARY KEY,
         short_url TEXT
     )''')
-    # إعدادات عامة قابلة للتغيير من لوحة الأدمن (مثل قناة الاشتراك الإجباري)
     c.execute('''CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
@@ -195,6 +177,8 @@ def migrate_db():
         "ALTER TABLE tests ADD COLUMN is_active INTEGER DEFAULT 1",
         "ALTER TABLE tests ADD COLUMN short_url TEXT",
         "ALTER TABLE users ADD COLUMN is_vip INTEGER DEFAULT 0",
+        "ALTER TABLE boxes ADD COLUMN is_active INTEGER DEFAULT 1",
+        "ALTER TABLE boxes ADD COLUMN short_url TEXT",
     ]:
         try:
             c.execute(stmt)
@@ -224,12 +208,9 @@ def set_setting(key, value):
     conn.close()
 
 def get_channel_username():
-    """يوزر قناة الاشتراك الإجباري الحالية (من قاعدة البيانات، أو القيمة
-    الافتراضية بالأعلى لو الأدمن ما غيّرها بعد)."""
     return get_setting("channel_username", CHANNEL_USERNAME)
 
 def get_channel_url():
-    """رابط قناة الاشتراك الإجباري الحالية (لزر '📢 اشترك بالقناة')."""
     return get_setting("channel_url", CHANNEL_URL)
 
 def set_channel(username, url):
@@ -297,13 +278,10 @@ def get_stats():
     return total, new_today, active_today, banned
 
 # ---------- اشتراك VIP ----------
-# الاشتراك دائم لكامل العام الدراسي (لا ينتهي تلقائياً)، يُدار يدوياً من
-# لوحة الأدمن بواسطة يوزر الطالب. يشترط أن الطالب ضغط /start قبل، حتى
-# يكون يوزره محفوظاً بجدول users.
 
 def is_vip(user_id):
     if is_admin(user_id):
-        return True  # الأدمنية يشوفون كل شيء دائماً بدون قيود
+        return True
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT is_vip FROM users WHERE user_id=?", (user_id,))
@@ -321,8 +299,6 @@ def get_user_id_by_username(username):
     return row[0] if row else None
 
 def set_vip_status_by_username(username, status):
-    """يفعّل/يلغي VIP لمستخدم بالاعتماد على يوزره. يرجّع آيدي المستخدم لو
-    لقاه، أو None لو ما كان بقاعدة البيانات (يعني ما ضغط /start أبداً)."""
     uid = get_user_id_by_username(username)
     if uid is None:
         return None
@@ -374,7 +350,6 @@ def remove_admin_db(user_id):
     conn.close()
 
 def get_all_admins_display():
-    """يرجع نص يوضح الأدمنية الأساسيين والمضافين."""
     lines = ["👑 الأدمنية الأساسيون (لا يمكن حذفهم):"]
     for a in SUPER_ADMIN_IDS:
         lines.append(f"  • {a}")
@@ -390,9 +365,6 @@ def get_all_admins_display():
 # ---------- روابط مختصرة (Short Links) ----------
 
 def shorten_url(long_url):
-    """يختصر رابط طويل عن طريق خدمة is.gd المجانية، ويحتفظ بنسخة بالكاش
-    حتى لا يطلب نفس الرابط مرتين. لو فشل الاختصار لأي سبب (بدون إنترنت،
-    الخدمة متوقفة...) يرجّع الرابط الأصلي بدون ما يوقف البوت."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT short_url FROM short_link_cache WHERE long_url=?", (long_url,))
@@ -421,7 +393,6 @@ def shorten_url(long_url):
 # ---------- إحصائيات الاستخدام (View Counts) ----------
 
 def log_view(scope, key):
-    """يزيد عداد المشاهدات لمادة (scope='subject') أو فصل/قسم (scope='chapter')."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute(
@@ -440,77 +411,118 @@ def get_top_views(scope, limit=5):
     conn.close()
     return rows
 
-# ---------- الاختبارات (Tests) ----------
+# ---------- دوال عامة مشتركة (تُستخدم للاختبارات والخانات معاً) ----------
+# نفس المنطق يتكرر لجدولين (tests و boxes)، فبدل تكرار الكود، هذه دوال
+# عامة تأخذ اسم الجدول كمعامل وتشتغل على أي منهما.
 
-def save_test(category, name, url):
+def _save_item(table, category, name, url):
     short = shorten_url(url)
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO tests (category, name, url, short_url, is_active) VALUES (?,?,?,?,1)",
+        f"INSERT INTO {table} (category, name, url, short_url, is_active) VALUES (?,?,?,?,1)",
         (category, name, url, short)
     )
     conn.commit()
     conn.close()
 
-def get_db_tests(category):
-    """الاختبارات المفعّلة فقط، مع استخدام الرابط المختصر إن وجد — هذا ما يشوفه الطالب."""
+def _get_db_items(table, category):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT name, url, short_url FROM tests WHERE category=? AND is_active=1 ORDER BY id", (category,))
+    c.execute(f"SELECT name, url, short_url FROM {table} WHERE category=? AND is_active=1 ORDER BY id", (category,))
     rows = [{"name": r[0], "url": (r[2] or r[1])} for r in c.fetchall()]
     conn.close()
     return rows
 
-def get_db_tests_full(category):
-    """يرجع كل الاختبارات (مفعّلة ومعطّلة) بكل تفاصيلها، مستخدم بلوحة الإدارة."""
+def _get_db_items_full(table, category):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, name, url, short_url, is_active FROM tests WHERE category=? ORDER BY id", (category,))
+    c.execute(f"SELECT id, name, url, short_url, is_active FROM {table} WHERE category=? ORDER BY id", (category,))
     rows = [{"id": r[0], "name": r[1], "url": r[2], "short_url": r[3], "is_active": r[4]} for r in c.fetchall()]
     conn.close()
     return rows
 
-def get_test_by_id(test_id):
+def _get_item_by_id(table, item_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, category, name, url, short_url, is_active FROM tests WHERE id=?", (test_id,))
+    c.execute(f"SELECT id, category, name, url, short_url, is_active FROM {table} WHERE id=?", (item_id,))
     row = c.fetchone()
     conn.close()
     if row:
         return {"id": row[0], "category": row[1], "name": row[2], "url": row[3], "short_url": row[4], "is_active": row[5]}
     return None
 
-def update_test(test_id, name, url):
+def _update_item(table, item_id, name, url):
     short = shorten_url(url)
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("UPDATE tests SET name=?, url=?, short_url=? WHERE id=?", (name, url, short, test_id))
+    c.execute(f"UPDATE {table} SET name=?, url=?, short_url=? WHERE id=?", (name, url, short, item_id))
     conn.commit()
     conn.close()
+
+def _set_item_active(table, item_id, status):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(f"UPDATE {table} SET is_active=? WHERE id=?", (status, item_id))
+    conn.commit()
+    conn.close()
+
+def _delete_item(table, item_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(f"DELETE FROM {table} WHERE id=?", (item_id,))
+    conn.commit()
+    conn.close()
+
+# ---------- الاختبارات (Tests) — تظهر للطالب بلون أزرق ----------
+
+def save_test(category, name, url):
+    _save_item("tests", category, name, url)
+
+def get_db_tests(category):
+    return _get_db_items("tests", category)
+
+def get_db_tests_full(category):
+    return _get_db_items_full("tests", category)
+
+def get_test_by_id(test_id):
+    return _get_item_by_id("tests", test_id)
+
+def update_test(test_id, name, url):
+    _update_item("tests", test_id, name, url)
 
 def set_test_active(test_id, status):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("UPDATE tests SET is_active=? WHERE id=?", (status, test_id))
-    conn.commit()
-    conn.close()
+    _set_item_active("tests", test_id, status)
 
 def delete_test(test_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM tests WHERE id=?", (test_id,))
-    conn.commit()
-    conn.close()
+    _delete_item("tests", test_id)
 
 def get_display_tests(category):
-    """قائمة الاختبارات النهائية اللي تنعرض للطالب: المكتوبة بالكود (بروابط
-    مختصرة أيضاً) + المضافة من لوحة الأدمن والمفعّلة فقط."""
-    tests = []
-    for t in data.get(category, []):
-        tests.append({"name": t["name"], "url": shorten_url(t["url"])})
-    tests += get_db_tests(category)
-    return tests
+    """الاختبارات النهائية اللي تنعرض للطالب (من لوحة الأدمن فقط الآن)."""
+    return get_db_tests(category)
+
+# ---------- الخانات (Boxes) — تظهر للطالب بلون أخضر ----------
+
+def save_box(category, name, url):
+    _save_item("boxes", category, name, url)
+
+def get_db_boxes(category):
+    return _get_db_items("boxes", category)
+
+def get_db_boxes_full(category):
+    return _get_db_items_full("boxes", category)
+
+def get_box_by_id(box_id):
+    return _get_item_by_id("boxes", box_id)
+
+def update_box(box_id, name, url):
+    _update_item("boxes", box_id, name, url)
+
+def set_box_active(box_id, status):
+    _set_item_active("boxes", box_id, status)
+
+def delete_box(box_id):
+    _delete_item("boxes", box_id)
 
 init_db()
 migrate_db()
@@ -518,15 +530,14 @@ migrate_db()
 # ======================================================================
 # ============================ حالات الذاكرة المؤقتة ======================
 # ======================================================================
-# هذه القواميس تحفظ بالذاكرة فقط (تنتهي عند إعادة تشغيل البوت) لتتبع
-# ماذا ينتظر كل أدمن من إدخال (نص/رقم) بالخطوة التالية.
 
 admin_state = {}          # حالة عامة: بث / حظر / فك حظر / تغيير قناة الاشتراك
-add_test_state = {}       # حالة إضافة اختبار جديد: {admin_id: {"stage", "category", "name"}}
-edit_test_state = {}      # حالة تعديل اختبار: {admin_id: {"stage", "id", "name"}}
-admin_mgmt_state = {}     # حالة إدارة الأدمنية: {admin_id: "waiting_add_admin" / "waiting_remove_admin"}
+add_test_state = {}       # حالة إضافة اختبار جديد
+edit_test_state = {}      # حالة تعديل اختبار
+add_box_state = {}        # حالة إضافة خانة جديدة
+edit_box_state = {}       # حالة تعديل خانة
+admin_mgmt_state = {}     # حالة إدارة الأدمنية
 
-# إعدادات المواد والفصول المستخدمة عند إضافة/تعديل/حذف اختبار من لوحة الأدمن
 SUBJECTS = [
     ("islamic", "التربية الإسلامية 🕋"),
     ("arabic", "اللغة العربية 📝"),
@@ -561,11 +572,9 @@ CHAPTER_CONFIG = {
     ]},
 }
 
-SUBJECT_LABELS = dict(SUBJECTS)  # key -> الاسم المعروض، يُستخدم بعرض الإحصائيات
+SUBJECT_LABELS = dict(SUBJECTS)
 
 def build_category_labels():
-    """يبني قاموس category -> اسم مقروء (مثلاً 'الرياضيات - الفصل 1')
-    يُستخدم فقط لعرض الإحصائيات بشكل مفهوم."""
     labels = {}
     for key, subj_label in SUBJECTS:
         config = CHAPTER_CONFIG.get(key)
@@ -584,9 +593,6 @@ CATEGORY_LABELS = build_category_labels()
 # ======================================================================
 # ============================== نظام VIP ================================
 # ======================================================================
-# الأقسام المجانية المتاحة للجميع: الفصل الأول من كل مادة فيها فصول رقمية،
-# بالإضافة لقسم واحد محدد من كل مادة نصية. أي قسم غير موجود بهذه القائمة
-# يعتبر تلقائياً حصري لمشتركي VIP.
 
 FREE_CATEGORIES = {
     "test_math_ch1",
@@ -620,8 +626,6 @@ def vip_upsell_markup(back_target):
     return markup
 
 def chapter_label(label, category, user_id):
-    """يضيف 🔒 أمام اسم القسم لو كان حصري VIP والمستخدم مو مشترك، عشان
-    الطالب يعرف مسبقاً وش مفتوح ووش مقفول قبل ما يضغط."""
     if is_category_free(category) or is_vip(user_id):
         return label
     return f"🔒 {label}"
@@ -629,42 +633,11 @@ def chapter_label(label, category, user_id):
 # ======================================================================
 # ============================ بيانات الاختبارات ==========================
 # ======================================================================
+# ⚠️ تم حذف الاختبارات المكتوبة يدوياً هنا بناءً على طلبك. من الآن، كل
+# الاختبارات تُضاف حصرياً من لوحة الأدمن (➕ إضافة اختبار) ثم تُحفظ
+# بقاعدة البيانات مباشرة.
 
-data = {
-    "test_math_ch1": [
-        {"name": "الصيغة العادية للعدد المركب", "url": "https://reliable-macaron-1a86c6.netlify.app/"},
-        {"name": "قيم X، y", "url": "https://willowy-rolypoly-f5eaa6.netlify.app/"},
-        {"name": "الجذور التربيعية", "url": "https://zesty-dragon-1890d4.netlify.app/"},
-        {"name": "حل المعادلة في C", "url": "https://jazzy-kleicha-9b72e0.netlify.app/"},
-        {"name": "تكوين المعادلة التربيعية", "url": "https://darling-marigold-a87bae.netlify.app/"},
-        {"name": "الصيغة القطبية", "url": "https://coruscating-blancmange-d2e88f.netlify.app/"},
-        {"name": "مبرهنة ديموافر", "url": "https://curious-kelpie-a1ca79.netlify.app/"},
-        {"name": "نتيجة مبرهنة ديموافر", "url": "https://stellular-axolotl-d54d1a.netlify.app/"},
-        {"name": "اوميكا", "url": "https://gilded-truffle-d58aa4.netlify.app/"}
-    ],
-    "test_bio_ch1": [
-        {"name": "من بداية الفصل الى خلية حقيقية النواة", "url": "https://enchanting-chaja-6ac535.netlify.app/"},
-        {"name": "من خلية حقيقية النواة الى جهاز كولجي", "url": "https://vocal-shortbread-e5673b.netlify.app/"},
-        {"name": "من جهاز كولجي الى الجسيمات الحالة", "url": "https://magical-malasada-cf8bf6.netlify.app/"},
-        {"name": "من الجسيمات الحالة الى الجسيم الحركي", "url": "https://splendid-paprenjak-0646d4.netlify.app/"},
-        {"name": "من الجسيم الحركي الى النواة", "url": "https://moonlit-pixie-df2b42.netlify.app/"},
-        {"name": "من النواة الى الانشطة الخلوية", "url": "https://unrivaled-daffodil-84f736.netlify.app/"},
-        {"name": "من الانشطة الخلوية الى الايض الخلوي", "url": "https://subtle-strudel-930e47.netlify.app/"},
-        {"name": "من الايض الخلوي الى الانقسامات", "url": "https://prismatic-pixie-398ad2.netlify.app/"},
-        {"name": "الانقسامات", "url": "https://poetic-tanuki-405148.netlify.app/"}
-    ],
-    "test_bio_ch2": [
-        {"name": "من المقدمة الى نسيج الاساس", "url": "https://zingy-pudding-a3ec29.netlify.app/"},
-        {"name": "من نسيج الاساس الى نسيج الحيوان", "url": "https://coruscating-dolphin-f6100a.netlify.app/"},
-        {"name": "من نسيج الحيوان الى نسيج الظهاري المطبق", "url": "https://shiny-squirrel-d9b312.netlify.app/"},
-        {"name": "من نسيج الظهاري المطبق الى نسيج الضام الرابط", "url": "https://peaceful-frangipane-98ca70.netlify.app/"},
-        {"name": "من نسيج الظام الرابط الى نسيج الظام المتخصص", "url": "https://papaya-narwhal-488037.netlify.app/"},
-        {"name": "من نسيج الظام المتخصص الى الدم", "url": "https://profound-kangaroo-3be276.netlify.app/"},
-        {"name": "من الدم الى النسيج العضلي", "url": "https://cozy-paprenjak-bf0774.netlify.app/"},
-        {"name": "النسيج العضلي والعصبي", "url": "https://zesty-donut-e97995.netlify.app/"},
-        {"name": "ما نوع النسيج", "url": "http://boisterous-bonbon-a17dfd.netlify.app"}
-    ]
-}
+data = {}
 
 # ======================================================================
 # ============================ قوائم الأزرار (Keyboards) ==================
@@ -692,7 +665,6 @@ def main_menu():
         InlineKeyboardButton("الفيزياء ⚡", callback_data="physics", style="primary"),
         InlineKeyboardButton("الكيمياء 🧪", callback_data="chemistry", style="primary")
     )
-    # زر المطور: يفتح مباشرة محادثة خاصة مع حساب المطور الشخصي
     markup.add(
         InlineKeyboardButton("👨‍💻 المطور", url=f"https://t.me/{DEVELOPER_USERNAME.lstrip('@')}", style="danger")
     )
@@ -708,16 +680,16 @@ def admin_menu(user_id):
         InlineKeyboardButton("✅ فك الحظر", callback_data="admin_unban", style="success"),
         InlineKeyboardButton("➕ إضافة اختبار", callback_data="admin_add_test", style="primary"),
         InlineKeyboardButton("✏️ تعديل/حذف اختبار", callback_data="admin_edit_test", style="primary"),
+        InlineKeyboardButton("➕ إضافة خانة", callback_data="admin_add_box", style="success"),
+        InlineKeyboardButton("✏️ تعديل/حذف خانة", callback_data="admin_edit_box", style="success"),
         InlineKeyboardButton("📡 تغيير قناة الاشتراك", callback_data="admin_set_channel", style="primary"),
         InlineKeyboardButton("⭐ إدارة VIP", callback_data="admin_manage_vip", style="success"),
     )
-    # إدارة الأدمنية متاحة فقط للأدمن الأساسي
     if is_super_admin(user_id):
         markup.add(InlineKeyboardButton("👑 إدارة الأدمنية", callback_data="admin_manage_admins", style="danger"))
     return markup
 
 def subject_markup(callback_prefix, include_cancel=True):
-    """قائمة اختيار المادة، تُستخدم عند إضافة أو تعديل/حذف اختبار."""
     markup = InlineKeyboardMarkup(row_width=2)
     for key, label in SUBJECTS:
         markup.add(InlineKeyboardButton(label, callback_data=f"{callback_prefix}{key}", style="primary"))
@@ -726,7 +698,6 @@ def subject_markup(callback_prefix, include_cancel=True):
     return markup
 
 def chapter_markup(subject, callback_prefix, include_cancel=True):
-    """قائمة اختيار الفصل/القسم لمادة معينة."""
     config = CHAPTER_CONFIG[subject]
     markup = InlineKeyboardMarkup(row_width=3)
     if config["type"] == "numeric":
@@ -749,7 +720,6 @@ def is_subscribed(user_id):
         member = bot.get_chat_member(get_channel_username(), user_id)
         return member.status not in ["left", "kicked"]
     except Exception:
-        # لو صار خطأ (مثلاً البوت مو أدمن بالقناة)، نعتبره غير مشترك احتياطياً
         return False
 
 @bot.message_handler(commands=['start'])
@@ -865,6 +835,14 @@ def handle_admin_callback(call):
         bot.send_message(call.message.chat.id, "📚 اختر المادة التي تريد تعديل/حذف اختبار منها:",
                           reply_markup=subject_markup("editsubj_"))
 
+    elif call.data == "admin_add_box":
+        bot.send_message(call.message.chat.id, "📚 اختر المادة التي تريد إضافة خانة لها:",
+                          reply_markup=subject_markup("addboxsubj_"))
+
+    elif call.data == "admin_edit_box":
+        bot.send_message(call.message.chat.id, "📚 اختر المادة التي تريد تعديل/حذف خانة منها:",
+                          reply_markup=subject_markup("editboxsubj_"))
+
     elif call.data == "admin_set_channel":
         admin_state[call.from_user.id] = "waiting_channel"
         current = get_channel_username()
@@ -953,7 +931,6 @@ def handle_set_channel(message):
 
     url = f"https://t.me/{username.lstrip('@')}"
 
-    # تحقق أن البوت فعلاً يقدر يتعامل مع هذه القناة (أي أنه أدمن فيها)
     try:
         bot.get_chat(username)
     except Exception:
@@ -972,8 +949,6 @@ def handle_set_channel(message):
 # ======================================================================
 # ============================ إدارة مشتركي VIP ==========================
 # ======================================================================
-# يتم التعامل مع الطالب بيوزره (وليس آيدي)، لذا يشترط أن الطالب يكون
-# ضغط /start مرة واحدة على الأقل حتى يكون يوزره محفوظاً بقاعدة البيانات.
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("vipmgmt_"))
 @safe_handler
@@ -1079,6 +1054,8 @@ def handle_add_test_chapter(call):
 def handle_add_test_cancel(call):
     add_test_state.pop(call.from_user.id, None)
     edit_test_state.pop(call.from_user.id, None)
+    add_box_state.pop(call.from_user.id, None)
+    edit_box_state.pop(call.from_user.id, None)
     bot.edit_message_text("❌ تم إلغاء العملية.", chat_id=call.message.chat.id, message_id=call.message.message_id)
     bot.answer_callback_query(call.id)
 
@@ -1107,9 +1084,6 @@ def handle_add_test_url(message):
 # ======================================================================
 # ========================== تعديل/حذف اختبار ============================
 # ======================================================================
-# ملاحظة: يمكن تعديل/حذف فقط الاختبارات المضافة من لوحة الأدمن (المخزنة
-# بقاعدة البيانات). الاختبارات المكتوبة يدوياً بالكود (قاموس data) تحتاج
-# تعديل الكود مباشرة.
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("editsubj_"))
 @safe_handler
@@ -1265,10 +1239,216 @@ def handle_edit_test_url(message):
     )
 
 # ======================================================================
+# ==================== إضافة خانة جديدة من لوحة الأدمن (أخضر) ================
+# ======================================================================
+# نفس منطق الاختبارات بالضبط، لكن مستقلة تماماً: تُخزّن بجدول "boxes" وتظهر
+# للطالب بلون أخضر مختلف عن لون الاختبارات (أزرق).
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("addboxsubj_"))
+@safe_handler
+def handle_add_box_subject(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    subject = call.data.replace("addboxsubj_", "")
+    bot.edit_message_text("📂 اختر الفصل/القسم الذي تريد إضافة الخانة فيه:", chat_id=call.message.chat.id, message_id=call.message.message_id,
+                           reply_markup=chapter_markup(subject, "addboxchap_"))
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("addboxchap_"))
+@safe_handler
+def handle_add_box_chapter(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+
+    category = call.data.replace("addboxchap_", "")
+    add_box_state[call.from_user.id] = {"stage": "waiting_name", "category": category}
+    bot.edit_message_text("✏️ أرسل الآن اسم الخانة:", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    bot.answer_callback_query(call.id)
+
+@bot.message_handler(func=lambda m: add_box_state.get(m.from_user.id, {}).get("stage") == "waiting_name")
+@safe_handler
+def handle_add_box_name(message):
+    add_box_state[message.from_user.id]["name"] = message.text.strip()
+    add_box_state[message.from_user.id]["stage"] = "waiting_url"
+    bot.send_message(message.chat.id, "🔗 الآن أرسل رابط الخانة (يبدأ بـ http:// أو https://):")
+
+@bot.message_handler(func=lambda m: add_box_state.get(m.from_user.id, {}).get("stage") == "waiting_url")
+@safe_handler
+def handle_add_box_url(message):
+    url = message.text.strip()
+    if not url.startswith("http"):
+        bot.send_message(message.chat.id, "⚠️ الرابط غير صحيح، تأكد إنه يبدأ بـ http:// أو https:// وأرسله مرة أخرى:")
+        return
+
+    state = add_box_state.pop(message.from_user.id)
+    save_box(state["category"], state["name"], url)
+    bot.send_message(
+        message.chat.id,
+        f"✅ تمت إضافة الخانة بنجاح! (ستظهر للطلاب باللون الأخضر)\n\n📌 القسم: {state['category']}\n📝 الاسم: {state['name']}\n🔗 الرابط: {url}"
+    )
+
+# ======================================================================
+# ============================ تعديل/حذف خانة ============================
+# ======================================================================
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxsubj_"))
+@safe_handler
+def handle_edit_box_subject(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+    subject = call.data.replace("editboxsubj_", "")
+    bot.edit_message_text("📂 اختر الفصل/القسم:", chat_id=call.message.chat.id, message_id=call.message.message_id,
+                           reply_markup=chapter_markup(subject, "editboxchap_"))
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxchap_"))
+@safe_handler
+def handle_edit_box_chapter(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+
+    category = call.data.replace("editboxchap_", "")
+    boxes = get_db_boxes_full(category)
+
+    if not boxes:
+        bot.answer_callback_query(call.id, "لا توجد خانات مضافة بهذا القسم ⏳", show_alert=True)
+        return
+
+    markup = InlineKeyboardMarkup(row_width=1)
+    for b in boxes:
+        status_emoji = "🟢" if b["is_active"] else "🔴"
+        markup.add(InlineKeyboardButton(f"{status_emoji} {b['name']}", callback_data=f"editboxitem_{b['id']}", style="success"))
+    markup.add(InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"))
+    bot.edit_message_text("🛠️ اختر الخانة التي تريد تعديلها أو حذفها:\n(🟢 مفعّلة / 🔴 معطّلة)",
+                           chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxitem_"))
+@safe_handler
+def handle_edit_box_item(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+
+    box_id = int(call.data.replace("editboxitem_", ""))
+    box = get_box_by_id(box_id)
+    if not box:
+        bot.answer_callback_query(call.id, "⚠️ هذه الخانة غير موجودة (ربما تم حذفها)", show_alert=True)
+        return
+
+    status_text = "🟢 مفعّلة" if box["is_active"] else "🔴 معطّلة"
+    toggle_label = "⏸️ تعطيل الخانة" if box["is_active"] else "▶️ تفعيل الخانة"
+
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✏️ تعديل الاسم والرابط", callback_data=f"editboxdo_{box_id}", style="success"),
+        InlineKeyboardButton(toggle_label, callback_data=f"editboxtoggle_{box_id}", style="primary"),
+        InlineKeyboardButton("🗑️ حذف الخانة", callback_data=f"editboxdel_{box_id}", style="danger"),
+        InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
+    )
+    bot.edit_message_text(
+        f"📝 الاسم: {box['name']}\n🔗 الرابط: {box['url']}\nالحالة: {status_text}\n\nاختر الإجراء:",
+        chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup
+    )
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxtoggle_"))
+@safe_handler
+def handle_edit_box_toggle(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+
+    box_id = int(call.data.replace("editboxtoggle_", ""))
+    box = get_box_by_id(box_id)
+    if not box:
+        bot.answer_callback_query(call.id, "⚠️ هذه الخانة غير موجودة", show_alert=True)
+        return
+
+    new_status = 0 if box["is_active"] else 1
+    set_box_active(box_id, new_status)
+    box["is_active"] = new_status
+
+    status_text = "🟢 مفعّلة" if box["is_active"] else "🔴 معطّلة"
+    toggle_label = "⏸️ تعطيل الخانة" if box["is_active"] else "▶️ تفعيل الخانة"
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✏️ تعديل الاسم والرابط", callback_data=f"editboxdo_{box_id}", style="success"),
+        InlineKeyboardButton(toggle_label, callback_data=f"editboxtoggle_{box_id}", style="primary"),
+        InlineKeyboardButton("🗑️ حذف الخانة", callback_data=f"editboxdel_{box_id}", style="danger"),
+        InlineKeyboardButton("❌ إلغاء", callback_data="addtest_cancel", style="danger"),
+    )
+    bot.edit_message_text(
+        f"📝 الاسم: {box['name']}\n🔗 الرابط: {box['url']}\nالحالة: {status_text}\n\nاختر الإجراء:",
+        chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup
+    )
+    bot.answer_callback_query(call.id, "تم التفعيل ✅" if new_status else "تم التعطيل ⏸️")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxdel_"))
+@safe_handler
+def handle_edit_box_delete(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+
+    box_id = int(call.data.replace("editboxdel_", ""))
+    box = get_box_by_id(box_id)
+    if not box:
+        bot.answer_callback_query(call.id, "⚠️ هذه الخانة غير موجودة (ربما تم حذفها مسبقاً)", show_alert=True)
+        return
+
+    delete_box(box_id)
+    bot.edit_message_text(f"🗑️ تم حذف الخانة \"{box['name']}\" بنجاح.",
+                           chat_id=call.message.chat.id, message_id=call.message.message_id)
+    bot.answer_callback_query(call.id, "تم الحذف ✅")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editboxdo_"))
+@safe_handler
+def handle_edit_box_start(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+
+    box_id = int(call.data.replace("editboxdo_", ""))
+    box = get_box_by_id(box_id)
+    if not box:
+        bot.answer_callback_query(call.id, "⚠️ هذه الخانة غير موجودة", show_alert=True)
+        return
+
+    edit_box_state[call.from_user.id] = {"stage": "waiting_name", "id": box_id}
+    bot.edit_message_text(f"✏️ أرسل الاسم الجديد للخانة (الحالي: {box['name']}):",
+                           chat_id=call.message.chat.id, message_id=call.message.message_id)
+    bot.answer_callback_query(call.id)
+
+@bot.message_handler(func=lambda m: edit_box_state.get(m.from_user.id, {}).get("stage") == "waiting_name")
+@safe_handler
+def handle_edit_box_name(message):
+    edit_box_state[message.from_user.id]["name"] = message.text.strip()
+    edit_box_state[message.from_user.id]["stage"] = "waiting_url"
+    bot.send_message(message.chat.id, "🔗 الآن أرسل الرابط الجديد (يبدأ بـ http:// أو https://):")
+
+@bot.message_handler(func=lambda m: edit_box_state.get(m.from_user.id, {}).get("stage") == "waiting_url")
+@safe_handler
+def handle_edit_box_url(message):
+    url = message.text.strip()
+    if not url.startswith("http"):
+        bot.send_message(message.chat.id, "⚠️ الرابط غير صحيح، تأكد إنه يبدأ بـ http:// أو https:// وأرسله مرة أخرى:")
+        return
+
+    state = edit_box_state.pop(message.from_user.id)
+    update_box(state["id"], state["name"], url)
+    bot.send_message(
+        message.chat.id,
+        f"✅ تم تعديل الخانة بنجاح!\n\n📝 الاسم الجديد: {state['name']}\n🔗 الرابط الجديد: {url}"
+    )
+
+# ======================================================================
 # ============================ إدارة الأدمنية ============================
 # ======================================================================
-# متاحة فقط للأدمنية الأساسيين (SUPER_ADMIN_IDS) لمنع أي أدمن مضاف من
-# حذف الأدمن الأساسي أو ترقية نفسه.
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admmgmt_"))
 @safe_handler
@@ -1330,9 +1510,6 @@ def handle_remove_admin_msg(message):
 # ======================================================================
 
 def send_backup_everywhere(caption):
-    """يرسل نسخة من قاعدة البيانات لكل الأدمنية الأساسيين + القناة الخاصة
-    للنسخ الاحتياطي (لو محددة بـ BACKUP_CHANNEL_ID). هذا أضمن من الاعتماد
-    على حساب شخصي واحد فقط."""
     targets = list(SUPER_ADMIN_IDS)
     if BACKUP_CHANNEL_ID:
         targets.append(BACKUP_CHANNEL_ID)
@@ -1359,15 +1536,14 @@ def manual_backup(message):
         bot.send_message(message.chat.id, "⚠️ لا توجد قاعدة بيانات بعد (لم يدخل أي مستخدم للبوت).")
 
 def auto_backup_loop():
-    # ترسل نسخة تلقائية كل 24 ساعة للأدمنية الأساسيين + القناة الخاصة (إن وجدت)
-    BACKUP_INTERVAL_SECONDS = 24 * 60 * 60  # غيّر الرقم لو تريد فترة مختلفة (مثلاً 12*60*60 لكل 12 ساعة)
+    BACKUP_INTERVAL_SECONDS = 24 * 60 * 60
     while True:
         time.sleep(BACKUP_INTERVAL_SECONDS)
         caption = f"📦 نسخة احتياطية تلقائية - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         try:
             send_backup_everywhere(caption)
         except FileNotFoundError:
-            pass  # لا توجد قاعدة بيانات بعد
+            pass
 
 # ======================================================================
 # ======================== قوائم المواد والفصول (للطلاب) ===================
@@ -1386,10 +1562,9 @@ def handle_query(call):
         bot.send_message(call.message.chat.id, "⚠️ يجب الاشتراك بالقناة أولاً لاستخدام البوت:", reply_markup=subscription_markup())
         return
 
-    save_user(call.from_user)  # تحديث آخر ظهور للمستخدم
+    save_user(call.from_user)
     markup = InlineKeyboardMarkup(row_width=1)
 
-    # تسجيل فتح المادة لأغراض الإحصائيات (📈 الأكثر استخداماً)
     if call.data in SUBJECT_LABELS:
         log_view("subject", call.data)
 
@@ -1459,7 +1634,6 @@ def handle_query(call):
     elif call.data.startswith("test_"):
         category = call.data
 
-        # تحديد زر الرجوع أولاً (قبل التحقق من VIP) عشان يكون جاهز بكلتا الحالتين
         if "isl" in category:
             b_target = "islamic"
         elif "ar_" in category:
@@ -1477,7 +1651,6 @@ def handle_query(call):
         else:
             b_target = "main_menu"
 
-        # القسم حصري VIP والطالب مو مشترك: نعرض رسالة الترقية بدل الاختبارات
         if not is_category_free(category) and not is_vip(call.from_user.id):
             bot.edit_message_text(
                 VIP_UPSELL_TEXT,
@@ -1486,17 +1659,19 @@ def handle_query(call):
             )
             return
 
-        tests = get_display_tests(category)
+        tests = get_display_tests(category)   # أزرق (style="primary")
+        boxes = get_db_boxes(category)         # أخضر (style="success")
 
-        if not tests:
-            bot.answer_callback_query(call.id, "عذراً، لم يتم إضافة اختبارات لهذا القسم بعد ⏳", show_alert=True)
+        if not tests and not boxes:
+            bot.answer_callback_query(call.id, "عذراً، لم يتم إضافة أي محتوى لهذا القسم بعد ⏳", show_alert=True)
             return
 
-        # تسجيل فتح الفصل/القسم لأغراض الإحصائيات (📈 الأكثر استخداماً)
         log_view("chapter", category)
 
         for test in tests:
             markup.add(InlineKeyboardButton(test["name"], url=test["url"], style="primary"))
+        for box in boxes:
+            markup.add(InlineKeyboardButton(box["name"], url=box["url"], style="success"))
 
         markup.add(back_btn(b_target))
         bot.edit_message_text("📚 اختر موضوع الاختبار للانتقال للموقع:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
