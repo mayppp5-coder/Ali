@@ -15,6 +15,7 @@ import requests
 TOKEN = '8879116228:AAHEiwJ8sUBV3TgMkpgWiQiUyiUHDtnEWEM'
 bot = telebot.TeleBot(TOKEN)
 
+# ⚠️ ضع يوزر حسابك الشخصي بتليجرام هنا (بدون تغيير @ لو موجود)
 DEVELOPER_USERNAME = "@Q4_91"
 DEVELOPER_ID = 1329831028  # آيدي المطور (احتياطي، يُستخدم كمرجع فقط)
 
@@ -193,6 +194,7 @@ def migrate_db():
     for stmt in [
         "ALTER TABLE tests ADD COLUMN is_active INTEGER DEFAULT 1",
         "ALTER TABLE tests ADD COLUMN short_url TEXT",
+        "ALTER TABLE users ADD COLUMN is_vip INTEGER DEFAULT 0",
     ]:
         try:
             c.execute(stmt)
@@ -293,6 +295,51 @@ def get_stats():
     banned = c.fetchone()[0]
     conn.close()
     return total, new_today, active_today, banned
+
+# ---------- اشتراك VIP ----------
+# الاشتراك دائم لكامل العام الدراسي (لا ينتهي تلقائياً)، يُدار يدوياً من
+# لوحة الأدمن بواسطة يوزر الطالب. يشترط أن الطالب ضغط /start قبل، حتى
+# يكون يوزره محفوظاً بجدول users.
+
+def is_vip(user_id):
+    if is_admin(user_id):
+        return True  # الأدمنية يشوفون كل شيء دائماً بدون قيود
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT is_vip FROM users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None and row[0] == 1
+
+def get_user_id_by_username(username):
+    username = username.lstrip('@')
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users WHERE username = ? COLLATE NOCASE", (username,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def set_vip_status_by_username(username, status):
+    """يفعّل/يلغي VIP لمستخدم بالاعتماد على يوزره. يرجّع آيدي المستخدم لو
+    لقاه، أو None لو ما كان بقاعدة البيانات (يعني ما ضغط /start أبداً)."""
+    uid = get_user_id_by_username(username)
+    if uid is None:
+        return None
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE users SET is_vip=? WHERE user_id=?", (status, uid))
+    conn.commit()
+    conn.close()
+    return uid
+
+def get_all_vip_users():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT user_id, username, first_name FROM users WHERE is_vip=1")
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 # ---------- الأدمنية (Admins) ----------
 
@@ -535,6 +582,51 @@ def build_category_labels():
 CATEGORY_LABELS = build_category_labels()
 
 # ======================================================================
+# ============================== نظام VIP ================================
+# ======================================================================
+# الأقسام المجانية المتاحة للجميع: الفصل الأول من كل مادة فيها فصول رقمية،
+# بالإضافة لقسم واحد محدد من كل مادة نصية. أي قسم غير موجود بهذه القائمة
+# يعتبر تلقائياً حصري لمشتركي VIP.
+
+FREE_CATEGORIES = {
+    "test_math_ch1",
+    "test_bio_ch1",
+    "test_phy_ch1",
+    "test_chem_ch1",
+    "test_ar_grammar",
+    "test_en_grammar",
+    "test_isl_ahkam",
+}
+
+def is_category_free(category):
+    return category in FREE_CATEGORIES
+
+VIP_PRICE = "20,000"
+
+VIP_UPSELL_TEXT = (
+    "🔒 هذا القسم حصري لمشتركي VIP\n\n"
+    "اشترك الآن بخدمة VIP واحصل على:\n"
+    "✅ فتح جميع الفصول وجميع المواد بالكامل\n"
+    "✅ فتح جميع مميزات البوت بدون أي قيود\n"
+    "✅ دعم مباشر وأولوية بالرد على استفساراتك\n\n"
+    f"💵 السعر: {VIP_PRICE} د.ع (اشتراك لكامل العام الدراسي)\n\n"
+    "للاشتراك، تواصل مباشرة مع المطور 👇"
+)
+
+def vip_upsell_markup(back_target):
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton("💬 تواصل للاشتراك", url=f"https://t.me/{DEVELOPER_USERNAME.lstrip('@')}", style="success"))
+    markup.add(back_btn(back_target))
+    return markup
+
+def chapter_label(label, category, user_id):
+    """يضيف 🔒 أمام اسم القسم لو كان حصري VIP والمستخدم مو مشترك، عشان
+    الطالب يعرف مسبقاً وش مفتوح ووش مقفول قبل ما يضغط."""
+    if is_category_free(category) or is_vip(user_id):
+        return label
+    return f"🔒 {label}"
+
+# ======================================================================
 # ============================ بيانات الاختبارات ==========================
 # ======================================================================
 
@@ -602,7 +694,7 @@ def main_menu():
     )
     # زر المطور: يفتح مباشرة محادثة خاصة مع حساب المطور الشخصي
     markup.add(
-        InlineKeyboardButton("👨‍💻 المطور", url=f"https://t.me/{DEVELOPER_USERNAME.lstrip('@')}", style="primary")
+        InlineKeyboardButton("👨‍💻 المطور", url=f"https://t.me/{DEVELOPER_USERNAME.lstrip('@')}", style="danger")
     )
     return markup
 
@@ -617,6 +709,7 @@ def admin_menu(user_id):
         InlineKeyboardButton("➕ إضافة اختبار", callback_data="admin_add_test", style="primary"),
         InlineKeyboardButton("✏️ تعديل/حذف اختبار", callback_data="admin_edit_test", style="primary"),
         InlineKeyboardButton("📡 تغيير قناة الاشتراك", callback_data="admin_set_channel", style="primary"),
+        InlineKeyboardButton("⭐ إدارة VIP", callback_data="admin_manage_vip", style="success"),
     )
     # إدارة الأدمنية متاحة فقط للأدمن الأساسي
     if is_super_admin(user_id):
@@ -782,6 +875,15 @@ def handle_admin_callback(call):
             "⚠️ تأكد أن البوت مضاف كأدمن بالقناة الجديدة قبل الإرسال، وإلا لن يستطيع التحقق من اشتراك الطلاب."
         )
 
+    elif call.data == "admin_manage_vip":
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("➕ إضافة مشترك VIP", callback_data="vipmgmt_add", style="success"),
+            InlineKeyboardButton("➖ إزالة مشترك VIP", callback_data="vipmgmt_remove", style="danger"),
+            InlineKeyboardButton("📋 عرض قائمة VIP", callback_data="vipmgmt_list", style="primary"),
+        )
+        bot.send_message(call.message.chat.id, "⭐ إدارة مشتركي VIP:", reply_markup=markup)
+
     elif call.data == "admin_manage_admins":
         if not is_super_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "🚫 هذه الميزة للأدمن الأساسي فقط", show_alert=True)
@@ -866,6 +968,84 @@ def handle_set_channel(message):
 
     set_channel(username, url)
     bot.send_message(message.chat.id, f"✅ تم تحديث قناة الاشتراك الإجباري بنجاح إلى {username}")
+
+# ======================================================================
+# ============================ إدارة مشتركي VIP ==========================
+# ======================================================================
+# يتم التعامل مع الطالب بيوزره (وليس آيدي)، لذا يشترط أن الطالب يكون
+# ضغط /start مرة واحدة على الأقل حتى يكون يوزره محفوظاً بقاعدة البيانات.
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("vipmgmt_"))
+@safe_handler
+def handle_vip_management(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "🚫 ليس لديك صلاحية", show_alert=True)
+        return
+
+    if call.data == "vipmgmt_add":
+        admin_state[call.from_user.id] = "waiting_vip_add"
+        bot.send_message(call.message.chat.id, "أرسل يوزر الطالب المراد ترقيته لـ VIP (يبدأ بـ @):")
+
+    elif call.data == "vipmgmt_remove":
+        admin_state[call.from_user.id] = "waiting_vip_remove"
+        bot.send_message(call.message.chat.id, "أرسل يوزر الطالب المراد إزالته من VIP (يبدأ بـ @):")
+
+    elif call.data == "vipmgmt_list":
+        vip_users = get_all_vip_users()
+        if not vip_users:
+            bot.send_message(call.message.chat.id, "⭐ لا يوجد مشتركين VIP حالياً.")
+        else:
+            lines = [f"⭐ قائمة مشتركي VIP ({len(vip_users)}):\n"]
+            for uid, username, first_name in vip_users:
+                uname = f"@{username}" if username else "(بدون يوزر)"
+                lines.append(f"  • {uname} — {first_name or ''} ({uid})")
+            bot.send_message(call.message.chat.id, "\n".join(lines))
+
+    bot.answer_callback_query(call.id)
+
+@bot.message_handler(func=lambda m: admin_state.get(m.from_user.id) == "waiting_vip_add")
+@safe_handler
+def handle_vip_add(message):
+    admin_state.pop(message.from_user.id, None)
+    username = message.text.strip().lstrip('@')
+    if not username:
+        bot.send_message(message.chat.id, "⚠️ أرسل يوزر صحيح.")
+        return
+
+    uid = set_vip_status_by_username(username, 1)
+    if uid is None:
+        bot.send_message(
+            message.chat.id,
+            f"⚠️ لم يتم العثور على مستخدم بيوزر @{username}.\n"
+            "تأكد أن الطالب ضغط /start بالبوت من قبل، وأن اليوزر مكتوب صح، ثم حاول مرة أخرى."
+        )
+        return
+
+    bot.send_message(message.chat.id, f"✅ تمت ترقية @{username} إلى VIP بنجاح.")
+    try:
+        bot.send_message(
+            uid,
+            "🎉 مبروك! تم تفعيل اشتراك VIP لك بنجاح.\n"
+            "صار عندك فتح جميع الفصول وجميع المواد وجميع المميزات بالكامل 🎓"
+        )
+    except Exception:
+        pass
+
+@bot.message_handler(func=lambda m: admin_state.get(m.from_user.id) == "waiting_vip_remove")
+@safe_handler
+def handle_vip_remove(message):
+    admin_state.pop(message.from_user.id, None)
+    username = message.text.strip().lstrip('@')
+    if not username:
+        bot.send_message(message.chat.id, "⚠️ أرسل يوزر صحيح.")
+        return
+
+    uid = set_vip_status_by_username(username, 0)
+    if uid is None:
+        bot.send_message(message.chat.id, f"⚠️ لم يتم العثور على مستخدم بيوزر @{username}.")
+        return
+
+    bot.send_message(message.chat.id, f"✅ تم إزالة @{username} من قائمة VIP.")
 
 # ======================================================================
 # ==================== إضافة اختبار جديد من لوحة الأدمن =====================
@@ -1217,82 +1397,106 @@ def handle_query(call):
         bot.edit_message_text("اختر المادة:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=main_menu())
 
     elif call.data == "islamic":
-        markup.add(InlineKeyboardButton("أحكام التلاوة", callback_data="test_isl_ahkam", style="success"))
+        uid = call.from_user.id
+        markup.add(InlineKeyboardButton(chapter_label("أحكام التلاوة", "test_isl_ahkam", uid), callback_data="test_isl_ahkam", style="success"))
         for i in range(1, 6):
-            markup.add(InlineKeyboardButton(f"الوحدة {i}", callback_data=f"test_isl_u{i}", style="success"))
+            cat = f"test_isl_u{i}"
+            markup.add(InlineKeyboardButton(chapter_label(f"الوحدة {i}", cat, uid), callback_data=cat, style="success"))
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🕋 التربية الإسلامية - اختر القسم:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
     elif call.data == "arabic":
+        uid = call.from_user.id
         markup.add(
-            InlineKeyboardButton("القواعد", callback_data="test_ar_grammar", style="success"),
-            InlineKeyboardButton("الأدب والنصوص", callback_data="test_ar_literature", style="success")
+            InlineKeyboardButton(chapter_label("القواعد", "test_ar_grammar", uid), callback_data="test_ar_grammar", style="success"),
+            InlineKeyboardButton(chapter_label("الأدب والنصوص", "test_ar_literature", uid), callback_data="test_ar_literature", style="success")
         )
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("📝 اللغة العربية - اختر القسم:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
     elif call.data == "english":
+        uid = call.from_user.id
         markup.add(
-            InlineKeyboardButton("القواعد (Grammar)", callback_data="test_en_grammar", style="success"),
-            InlineKeyboardButton("قطع الكتاب (Textbook)", callback_data="test_en_passages", style="success"),
-            InlineKeyboardButton("الأدب (Literature)", callback_data="test_en_literature", style="success")
+            InlineKeyboardButton(chapter_label("القواعد (Grammar)", "test_en_grammar", uid), callback_data="test_en_grammar", style="success"),
+            InlineKeyboardButton(chapter_label("قطع الكتاب (Textbook)", "test_en_passages", uid), callback_data="test_en_passages", style="success"),
+            InlineKeyboardButton(chapter_label("الأدب (Literature)", "test_en_literature", uid), callback_data="test_en_literature", style="success")
         )
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🔠 اللغة الإنكليزية - اختر القسم:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
     elif call.data == "math":
+        uid = call.from_user.id
         for i in range(1, 6):
-            markup.add(InlineKeyboardButton(f"الفصل {i}", callback_data=f"test_math_ch{i}", style="success"))
+            cat = f"test_math_ch{i}"
+            markup.add(InlineKeyboardButton(chapter_label(f"الفصل {i}", cat, uid), callback_data=cat, style="success"))
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🔢 الرياضيات - اختر الفصل:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
     elif call.data == "biology":
+        uid = call.from_user.id
         for i in range(1, 6):
-            markup.add(InlineKeyboardButton(f"الفصل {i}", callback_data=f"test_bio_ch{i}", style="success"))
+            cat = f"test_bio_ch{i}"
+            markup.add(InlineKeyboardButton(chapter_label(f"الفصل {i}", cat, uid), callback_data=cat, style="success"))
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🧬 الأحياء - اختر الفصل:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
     elif call.data == "physics":
+        uid = call.from_user.id
         for i in range(1, 11):
-            markup.add(InlineKeyboardButton(f"الفصل {i}", callback_data=f"test_phy_ch{i}", style="success"))
+            cat = f"test_phy_ch{i}"
+            markup.add(InlineKeyboardButton(chapter_label(f"الفصل {i}", cat, uid), callback_data=cat, style="success"))
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("⚡ الفيزياء - اختر الفصل:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
     elif call.data == "chemistry":
+        uid = call.from_user.id
         for i in range(1, 9):
-            markup.add(InlineKeyboardButton(f"الفصل {i}", callback_data=f"test_chem_ch{i}", style="success"))
+            cat = f"test_chem_ch{i}"
+            markup.add(InlineKeyboardButton(chapter_label(f"الفصل {i}", cat, uid), callback_data=cat, style="success"))
         markup.add(back_btn("main_menu"))
         bot.edit_message_text("🧪 الكيمياء - اختر الفصل:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
     elif call.data.startswith("test_"):
-        tests = get_display_tests(call.data)
+        category = call.data
+
+        # تحديد زر الرجوع أولاً (قبل التحقق من VIP) عشان يكون جاهز بكلتا الحالتين
+        if "isl" in category:
+            b_target = "islamic"
+        elif "ar_" in category:
+            b_target = "arabic"
+        elif "en_" in category:
+            b_target = "english"
+        elif "math" in category:
+            b_target = "math"
+        elif "bio" in category:
+            b_target = "biology"
+        elif "phy" in category:
+            b_target = "physics"
+        elif "chem" in category:
+            b_target = "chemistry"
+        else:
+            b_target = "main_menu"
+
+        # القسم حصري VIP والطالب مو مشترك: نعرض رسالة الترقية بدل الاختبارات
+        if not is_category_free(category) and not is_vip(call.from_user.id):
+            bot.edit_message_text(
+                VIP_UPSELL_TEXT,
+                chat_id=call.message.chat.id, message_id=call.message.message_id,
+                reply_markup=vip_upsell_markup(b_target)
+            )
+            return
+
+        tests = get_display_tests(category)
 
         if not tests:
             bot.answer_callback_query(call.id, "عذراً، لم يتم إضافة اختبارات لهذا القسم بعد ⏳", show_alert=True)
             return
 
         # تسجيل فتح الفصل/القسم لأغراض الإحصائيات (📈 الأكثر استخداماً)
-        log_view("chapter", call.data)
+        log_view("chapter", category)
 
         for test in tests:
             markup.add(InlineKeyboardButton(test["name"], url=test["url"], style="primary"))
-
-        if "isl" in call.data:
-            b_target = "islamic"
-        elif "ar_" in call.data:
-            b_target = "arabic"
-        elif "en_" in call.data:
-            b_target = "english"
-        elif "math" in call.data:
-            b_target = "math"
-        elif "bio" in call.data:
-            b_target = "biology"
-        elif "phy" in call.data:
-            b_target = "physics"
-        elif "chem" in call.data:
-            b_target = "chemistry"
-        else:
-            b_target = "main_menu"
 
         markup.add(back_btn(b_target))
         bot.edit_message_text("📚 اختر موضوع الاختبار للانتقال للموقع:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
