@@ -702,7 +702,7 @@ FREE_CATEGORIES = {
 def is_category_free(category):
     return category in FREE_CATEGORIES
 
-VIP_PRICE = "20,000"
+VIP_PRICE = "25,000"
 
 VIP_UPSELL_TEXT = (
     "🔒 هذا القسم حصري لمشتركي VIP\n\n"
