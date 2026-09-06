@@ -808,7 +808,7 @@ def append_subject_boxes(markup, subject_key):
     """يضيف بآخر القائمة الرئيسية لمادة معينة أي خانات (📦) مربوطة بها مباشرة."""
     boxes = get_db_boxes(f"subj_{subject_key}")
     for b in boxes:
-        markup.add(InlineKeyboardButton(f"📦 {b['name']}", callback_data=f"box_{b['id']}", style="success"))
+        markup.add(InlineKeyboardButton(b['name'], callback_data=f"box_{b['id']}", style="success"))
 
 # ======================================================================
 # ========================= أوامر المستخدم العادي =========================
@@ -1865,7 +1865,7 @@ def handle_query(call):
         for test in tests:
             markup.add(InlineKeyboardButton(test["name"], url=test["url"], style="primary"))
         for box in boxes:
-            markup.add(InlineKeyboardButton(f"📦 {box['name']}", callback_data=f"box_{box['id']}", style="success"))
+            markup.add(InlineKeyboardButton(box['name'], callback_data=f"box_{box['id']}", style="success"))
 
         markup.add(back_btn(b_target))
         bot.edit_message_text("📚 اختر موضوع الاختبار للانتقال للموقع:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
@@ -1895,11 +1895,11 @@ def handle_query(call):
         for test in tests:
             markup.add(InlineKeyboardButton(test["name"], url=test["url"], style="primary"))
         for sb in subboxes:
-            markup.add(InlineKeyboardButton(f"📦 {sb['name']}", callback_data=f"box_{sb['id']}", style="success"))
+            markup.add(InlineKeyboardButton(sb['name'], callback_data=f"box_{sb['id']}", style="success"))
 
         back_target = back_target_for_location(box["category"])
         markup.add(back_btn(back_target))
-        bot.edit_message_text(f"📦 {box['name']} - اختر:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+        bot.edit_message_text(f"{box['name']} - اختر:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 # ======================================================================
 # ================================ تشغيل البوت =============================
